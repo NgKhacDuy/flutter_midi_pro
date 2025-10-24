@@ -62,3 +62,8 @@
 
 - Support for 16kb page size
 - Version bump for android side
+
+## 3.1.6
+
+- Sustain added.
+- stopAllNotes method updated to turn off sustain before stopping notes.

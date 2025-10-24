@@ -129,6 +129,28 @@ class MidiPro {
     return FlutterMidiProPlatform.instance.stopAllNotes(sfId);
   }
 
+  /// Sends a MIDI Control Change (CC) message to the specified channel on a soundfont.
+  /// [controller] is the CC number (0-127), [value] is the CC value (0-127).
+  Future<void> controlChange({
+    required int controller,
+    required int value,
+    int channel = 0,
+    int sfId = 1,
+  }) async {
+    return FlutterMidiProPlatform.instance.controlChange(sfId, channel, controller, value);
+  }
+
+  /// Enables or disables sustain (MIDI CC 64) on the specified channel.
+  /// When [enabled] is true, sends value 127; when false, sends value 0.
+  Future<void> setSustain({
+    required bool enabled,
+    int channel = 0,
+    int sfId = 1,
+  }) async {
+    final value = enabled ? 127 : 0;
+    return controlChange(controller: 64, value: value, channel: channel, sfId: sfId);
+  }
+
   /// Unloads a soundfont from memory.
   /// The soundfont ID is the ID returned by the [loadSoundfont] method.
   /// If resetPresets is true, the presets will be reset to the default values.

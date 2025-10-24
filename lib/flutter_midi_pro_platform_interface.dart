@@ -32,6 +32,12 @@ abstract class FlutterMidiProPlatform extends PlatformInterface {
     throw UnimplementedError('stopAllNotes() has not been implemented.');
   }
 
+  /// Sends a MIDI Control Change (CC) message to the specified channel on a soundfont.
+  /// [controller] is the CC number (0-127), [value] is the CC value (0-127).
+  Future<void> controlChange(int sfId, int channel, int controller, int value) {
+    throw UnimplementedError('controlChange() has not been implemented.');
+  }
+
   Future<void> unloadSoundfont(int sfId) {
     throw UnimplementedError('unloadSoundfont() has not been implemented.');
   }

@@ -22,6 +22,7 @@ class _MyAppState extends State<MyApp> {
   final bankIndex = ValueNotifier<int>(0);
   final channelIndex = ValueNotifier<int>(0);
   final volume = ValueNotifier<int>(127);
+  final sustainOn = ValueNotifier<bool>(false);
   Map<int, NoteModel> pointerAndNote = {};
 
   /// Loads a soundfont file from the specified path.
@@ -296,6 +297,47 @@ class _MyAppState extends State<MyApp> {
                                   ],
                                 );
                               },
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                            child: Row(
+                              children: [
+                                const Text('Sustain (CC64): '),
+                                const SizedBox(width: 8),
+                                ValueListenableBuilder(
+                                  valueListenable: sustainOn,
+                                  builder: (context, sustainEnabled, _) {
+                                    return Switch(
+                                      value: sustainEnabled,
+                                      onChanged: selectedSfIdValue != null
+                                          ? (val) async {
+                                              sustainOn.value = val;
+                                              await midiPro.setSustain(
+                                                enabled: val,
+                                                channel: channelIndex.value,
+                                                sfId: selectedSfIdValue,
+                                              );
+                                            }
+                                          : null,
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.stop_circle_outlined),
+                              onPressed: selectedSfIdValue == null
+                                  ? null
+                                  : () async {
+                                      sustainOn.value = false;
+                                      await midiPro.stopAllNotes(sfId: selectedSfIdValue);
+                                      pointerAndNote.clear();
+                                    },
+                              label: const Text('Stop All Notes'),
                             ),
                           ),
                           Padding(

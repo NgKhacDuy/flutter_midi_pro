@@ -64,11 +64,24 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
             return
         }
         soundfontSampler!.forEach { (sampler) in
-            // Send MIDI "All Notes Off" controller message (0x7B/123) to all channels
+            // Sustain'i kapat (CC 64 -> 0) ve anında sesi kes (All Sound Off, CC 120 -> 0)
             for channel in 0...15 {
-                sampler.sendController(0x7B, withValue: 0, onChannel: UInt8(channel))
+                sampler.sendController(64, withValue: 0, onChannel: UInt8(channel))
+                sampler.sendController(120, withValue: 0, onChannel: UInt8(channel))
             }
         }
+        result(nil)
+    case "controlChange":
+        let args = call.arguments as! [String: Any]
+        let sfId = args["sfId"] as! Int
+        let channel = args["channel"] as! Int
+        let controller = args["controller"] as! Int
+        let value = args["value"] as! Int
+        guard let sampler = soundfontSamplers[sfId]?[channel] else {
+            result(FlutterError(code: "SOUND_FONT_NOT_FOUND", message: "Soundfont/channel not found", details: nil))
+            return
+        }
+        sampler.sendController(UInt8(controller), withValue: UInt8(value), onChannel: UInt8(channel))
         result(nil)
     case "selectInstrument":
         let args = call.arguments as! [String: Any]
