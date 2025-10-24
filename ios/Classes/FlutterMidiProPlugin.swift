@@ -64,7 +64,10 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
             return
         }
         soundfontSampler!.forEach { (sampler) in
-            sampler.stopAllNotes()
+            // Send MIDI "All Notes Off" controller message (0x7B/123) to all channels
+            for channel in 0...15 {
+                sampler.sendController(0x7B, withValue: 0, onChannel: UInt8(channel))
+            }
         }
         result(nil)
     case "selectInstrument":
