@@ -51,8 +51,18 @@ Java_com_melihhakanpektas_flutter_1midi_1pro_FlutterMidiProPlugin_stopNote(JNIEn
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_melihhakanpektas_flutter_1midi_1pro_FlutterMidiProPlugin_stopAllNotes(JNIEnv* env, jclass clazz, jint sfId) {
-    fluid_synth_all_notes_off(synths[sfId], -1);
-    fluid_synth_system_reset(synths[sfId]);
+    if (synths.find(sfId) == synths.end()) return;
+    // Sustain'i kapat ve tüm kanallar için All Sound Off gönder
+    for (int ch = 0; ch < 16; ++ch) {
+        fluid_synth_cc(synths[sfId], ch, 64, 0); // Sustain off
+        fluid_synth_all_sounds_off(synths[sfId], ch); // Instant cut
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_melihhakanpektas_flutter_1midi_1pro_FlutterMidiProPlugin_controlChange(JNIEnv* env, jclass clazz, jint sfId, jint channel, jint controller, jint value) {
+    if (synths.find(sfId) == synths.end()) return;
+    fluid_synth_cc(synths[sfId], channel, controller, value);
 }
 
 extern "C" JNIEXPORT void JNICALL

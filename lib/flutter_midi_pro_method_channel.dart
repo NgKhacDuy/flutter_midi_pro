@@ -37,6 +37,16 @@ class MethodChannelFlutterMidiPro extends FlutterMidiProPlatform {
   }
 
   @override
+  Future<void> controlChange(int sfId, int channel, int controller, int value) async {
+    await _channel.invokeMethod('controlChange', {
+      'sfId': sfId,
+      'channel': channel,
+      'controller': controller,
+      'value': value,
+    });
+  }
+
+  @override
   Future<void> unloadSoundfont(int sfId) async {
     await _channel.invokeMethod('unloadSoundfont', {'sfId': sfId});
   }

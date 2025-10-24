@@ -34,6 +34,9 @@ class FlutterMidiProPlugin: FlutterPlugin, MethodCallHandler {
     private external fun stopAllNotes(sfId: Int)
 
     @JvmStatic
+  private external fun controlChange(sfId: Int, channel: Int, controller: Int, value: Int)
+
+  @JvmStatic
     private external fun unloadSoundfont(sfId: Int)
     @JvmStatic
     private external fun dispose()
@@ -110,6 +113,14 @@ class FlutterMidiProPlugin: FlutterPlugin, MethodCallHandler {
       "stopAllNotes" -> {
         val sfId = call.argument<Int>("sfId") as Int
         stopAllNotes(sfId)
+        result.success(null)
+      }
+      "controlChange" -> {
+        val sfId = call.argument<Int>("sfId") ?: 1
+        val channel = call.argument<Int>("channel") ?: 0
+        val controller = call.argument<Int>("controller") ?: 0
+        val value = call.argument<Int>("value") ?: 0
+        controlChange(sfId, channel, controller, value)
         result.success(null)
       }
       "unloadSoundfont" -> {
