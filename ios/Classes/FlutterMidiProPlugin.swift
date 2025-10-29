@@ -9,6 +9,83 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
   var soundfontIndex = 1
   var soundfontSamplers: [Int: [AVAudioUnitSampler]] = [:]
   var soundfontURLs: [Int: URL] = [:]
+  var soundfontConfigs: [Int: (bank: Int, program: Int)] = [:]
+  
+  public override init() {
+    super.init()
+    setupNotifications()
+  }
+  
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+  }
+  
+  private func setupNotifications() {
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAppWillResignActive),
+      name: UIApplication.willResignActiveNotification,
+      object: nil
+    )
+    
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAppDidBecomeActive),
+      name: UIApplication.didBecomeActiveNotification,
+      object: nil
+    )
+  }
+  
+  @objc private func handleAppWillResignActive() {
+    // Stop all audio engines when going to background
+    audioEngines.forEach { (key, engines) in
+      engines.forEach { engine in
+        engine.stop()
+      }
+    }
+  }
+  
+  @objc private func handleAppDidBecomeActive() {
+    // Reinitialize and restart all audio engines when coming back to foreground
+    for (sfId, engines) in audioEngines {
+      guard let samplers = soundfontSamplers[sfId],
+            let url = soundfontURLs[sfId],
+            let config = soundfontConfigs[sfId] else {
+        continue
+      }
+      
+      for (index, engine) in engines.enumerated() {
+        // Stop the old engine
+        engine.stop()
+        
+        // Detach the sampler
+        engine.detach(samplers[index])
+        
+        // Reattach and reconnect
+        engine.attach(samplers[index])
+        engine.connect(samplers[index], to: engine.mainMixerNode, format: nil)
+        
+        // Restart the engine
+        do {
+          try engine.start()
+          
+          // Reload the soundfont instrument
+          let isPercussion = (config.bank == 128)
+          let bankMSB: UInt8 = isPercussion ? UInt8(kAUSampler_DefaultPercussionBankMSB) : UInt8(kAUSampler_DefaultMelodicBankMSB)
+          let bankLSB: UInt8 = isPercussion ? 0 : UInt8(config.bank)
+          
+          try samplers[index].loadSoundBankInstrument(
+            at: url,
+            program: UInt8(config.program),
+            bankMSB: bankMSB,
+            bankLSB: bankLSB
+          )
+        } catch {
+          print("Failed to reinitialize audio engine for sfId \(sfId), channel \(index): \(error)")
+        }
+      }
+    }
+  }
   
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "flutter_midi_pro", binaryMessenger: registrar.messenger())
@@ -52,6 +129,7 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
         }
         soundfontSamplers[soundfontIndex] = chSamplers
         soundfontURLs[soundfontIndex] = url
+        soundfontConfigs[soundfontIndex] = (bank: bank, program: program)
         audioEngines[soundfontIndex] = chAudioEngines
         soundfontIndex += 1
         result(soundfontIndex-1)
@@ -134,6 +212,7 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
         audioEngines.removeValue(forKey: sfId)
         soundfontSamplers.removeValue(forKey: sfId)
         soundfontURLs.removeValue(forKey: sfId)
+        soundfontConfigs.removeValue(forKey: sfId)
         result(nil)
     case "dispose":
         audioEngines.forEach { (key, value) in
@@ -143,6 +222,7 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
         }
         audioEngines = [:]
         soundfontSamplers = [:]
+        soundfontConfigs = [:]
         result(nil)
     default:
       result(FlutterMethodNotImplemented)
