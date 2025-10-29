@@ -45,4 +45,8 @@ abstract class FlutterMidiProPlatform extends PlatformInterface {
   Future<void> dispose() {
     throw UnimplementedError('dispose() has not been implemented.');
   }
+
+  Future<void> resetAudioSession() {
+    throw UnimplementedError('resetAudioSession() has not been implemented.');
+  }
 }

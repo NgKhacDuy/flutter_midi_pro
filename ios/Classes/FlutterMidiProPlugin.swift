@@ -46,7 +46,18 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
   }
   
   @objc private func handleAppDidBecomeActive() {
-    // Reinitialize and restart all audio engines when coming back to foreground
+    reinitializeAudioEngines { success, error in
+      if !success {
+        print("Auto-reinitialize failed: \(error ?? "unknown error")")
+      }
+    }
+  }
+  
+  private func reinitializeAudioEngines(completion: @escaping (Bool, String?) -> Void) {
+    // Reinitialize and restart all audio engines
+    var hasError = false
+    var errorMessage: String?
+    
     for (sfId, engines) in audioEngines {
       guard let samplers = soundfontSamplers[sfId],
             let url = soundfontURLs[sfId],
@@ -81,10 +92,14 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
             bankLSB: bankLSB
           )
         } catch {
-          print("Failed to reinitialize audio engine for sfId \(sfId), channel \(index): \(error)")
+          hasError = true
+          errorMessage = "Failed to reinitialize audio engine for sfId \(sfId), channel \(index): \(error.localizedDescription)"
+          print(errorMessage!)
         }
       }
     }
+    
+    completion(!hasError, errorMessage)
   }
   
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -133,6 +148,14 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
         audioEngines[soundfontIndex] = chAudioEngines
         soundfontIndex += 1
         result(soundfontIndex-1)
+    case "resetAudioSession":
+        reinitializeAudioEngines { success, error in
+            if success {
+                result(["success": true])
+            } else {
+                result(FlutterError(code: "REINIT_FAILED", message: error ?? "Failed to reinitialize audio engines", details: nil))
+            }
+        }
     case "stopAllNotes":
         let args = call.arguments as! [String: Any]
         let sfId = args["sfId"] as! Int

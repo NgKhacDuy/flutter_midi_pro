@@ -167,4 +167,11 @@ class MidiPro {
   Future<void> dispose() async {
     return FlutterMidiProPlatform.instance.dispose();
   }
+
+  /// Resets the audio session.
+  /// This can be useful if you encounter audio issues.
+  /// only for iOS.
+  Future<void> resetAudioSession() async {
+    return FlutterMidiProPlatform.instance.resetAudioSession();
+  }
 }

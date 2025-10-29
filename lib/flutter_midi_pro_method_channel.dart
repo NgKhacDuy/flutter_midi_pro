@@ -55,4 +55,9 @@ class MethodChannelFlutterMidiPro extends FlutterMidiProPlatform {
   Future<void> dispose() async {
     await _channel.invokeMethod('dispose');
   }
+
+  @override
+  Future<void> resetAudioSession() async{
+    await _channel.invokeMethod('resetAudioSession');
+  }
 }
