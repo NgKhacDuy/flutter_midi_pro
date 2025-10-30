@@ -13,44 +13,6 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
   
   public override init() {
     super.init()
-    setupNotifications()
-  }
-  
-  deinit {
-    NotificationCenter.default.removeObserver(self)
-  }
-  
-  private func setupNotifications() {
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleAppWillResignActive),
-      name: UIApplication.willResignActiveNotification,
-      object: nil
-    )
-    
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleAppDidBecomeActive),
-      name: UIApplication.didBecomeActiveNotification,
-      object: nil
-    )
-  }
-  
-  @objc private func handleAppWillResignActive() {
-    // Stop all audio engines when going to background
-    audioEngines.forEach { (key, engines) in
-      engines.forEach { engine in
-        engine.stop()
-      }
-    }
-  }
-  
-  @objc private func handleAppDidBecomeActive() {
-    reinitializeAudioEngines { success, error in
-      if !success {
-        print("Auto-reinitialize failed: \(error ?? "unknown error")")
-      }
-    }
   }
   
   private func reinitializeAudioEngines(completion: @escaping (Bool, String?) -> Void) {
