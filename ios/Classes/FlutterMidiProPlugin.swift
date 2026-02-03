@@ -15,54 +15,71 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
     super.init()
   }
   
-  private func reinitializeAudioEngines(completion: @escaping (Bool, String?) -> Void) {
-    // Reinitialize and restart all audio engines
-    var hasError = false
-    var errorMessage: String?
-    
-    for (sfId, engines) in audioEngines {
-      guard let samplers = soundfontSamplers[sfId],
-            let url = soundfontURLs[sfId],
-            let config = soundfontConfigs[sfId] else {
-        continue
-      }
-      
-      for (index, engine) in engines.enumerated() {
-        // Stop the old engine
-        engine.stop()
-        
-        // Detach the sampler
-        engine.detach(samplers[index])
-        
-        // Reattach and reconnect
-        engine.attach(samplers[index])
-        engine.connect(samplers[index], to: engine.mainMixerNode, format: nil)
-        
-        // Restart the engine
+    private func reinitializeAudioEngines(completion: @escaping (Bool, String?) -> Void) {
+        // ---------------------------------------------------------
+        // 1. FIX: Reclaim and Activate the Audio Session first
+        // ---------------------------------------------------------
+        let session = AVAudioSession.sharedInstance()
         do {
-          try engine.start()
-          
-          // Reload the soundfont instrument
-          let isPercussion = (config.bank == 128)
-          let bankMSB: UInt8 = isPercussion ? UInt8(kAUSampler_DefaultPercussionBankMSB) : UInt8(kAUSampler_DefaultMelodicBankMSB)
-          let bankLSB: UInt8 = isPercussion ? 0 : UInt8(config.bank)
-          
-          try samplers[index].loadSoundBankInstrument(
-            at: url,
-            program: UInt8(config.program),
-            bankMSB: bankMSB,
-            bankLSB: bankLSB
-          )
+            // Reset category to Playback so the engine knows it has output capability.
+            // If you want the synth to play WITH the mic still on, use .playAndRecord
+            try session.setCategory(.playback, mode: .default)
+            
+            // Force the session to be active. This resolves the -10851 error
+            // by updating the hardware I/O settings to match this app's needs.
+            try session.setActive(true)
         } catch {
-          hasError = true
-          errorMessage = "Failed to reinitialize audio engine for sfId \(sfId), channel \(index): \(error.localizedDescription)"
-          print(errorMessage!)
+            print("Error setting up Audio Session: \(error.localizedDescription)")
+            completion(false, "Failed to restore Audio Session: \(error.localizedDescription)")
+            return
         }
-      }
+        
+        var hasError = false
+        var errorMessage: String?
+        
+        for (sfId, engines) in audioEngines {
+            guard let samplers = soundfontSamplers[sfId],
+                  let url = soundfontURLs[sfId],
+                  let config = soundfontConfigs[sfId] else {
+                continue
+            }
+            
+            for (index, engine) in engines.enumerated() {
+                // Stop the engine to release hardware locks
+                engine.stop()
+                
+                // Detach and re-attach to force a graph update
+                engine.detach(samplers[index])
+                engine.attach(samplers[index])
+                
+                // Reconnect
+                engine.connect(samplers[index], to: engine.mainMixerNode, format: nil)
+                
+                do {
+                    // Now that Session is Active (.playback), this start() should succeed
+                    try engine.start()
+                    
+                    // Reload the soundfont instrument
+                    let isPercussion = (config.bank == 128)
+                    let bankMSB: UInt8 = isPercussion ? UInt8(kAUSampler_DefaultPercussionBankMSB) : UInt8(kAUSampler_DefaultMelodicBankMSB)
+                    let bankLSB: UInt8 = isPercussion ? 0 : UInt8(config.bank)
+                    
+                    try samplers[index].loadSoundBankInstrument(
+                        at: url,
+                        program: UInt8(config.program),
+                        bankMSB: bankMSB,
+                        bankLSB: bankLSB
+                    )
+                } catch {
+                    hasError = true
+                    errorMessage = "Failed to reinitialize audio engine for sfId \(sfId), channel \(index): \(error.localizedDescription)"
+                    print(errorMessage!)
+                }
+            }
+        }
+        
+        completion(!hasError, errorMessage)
     }
-    
-    completion(!hasError, errorMessage)
-  }
   
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "flutter_midi_pro", binaryMessenger: registrar.messenger())
