@@ -245,7 +245,6 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
       result(nil)
 
     case "dispose":
-      case "dispose":
     // ① Remove observer BEFORE teardown — prevents interruption
     //   callbacks firing on half-dead engines
     NotificationCenter.default.removeObserver(self)
