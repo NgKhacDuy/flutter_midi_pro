@@ -245,37 +245,36 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
       result(nil)
 
     case "dispose":
-    // ① Remove observer BEFORE teardown — prevents interruption
-    //   callbacks firing on half-dead engines
-    NotificationCenter.default.removeObserver(self)
-
-    for sfId in Array(audioEngines.keys) {
-        guard let engines = audioEngines[sfId],
-              let samplers = soundfontSamplers[sfId] else { continue }
-        for i in 0...15 {
-            samplers[i].sendController(64,  withValue: 0, onChannel: UInt8(i))
-            samplers[i].sendController(120, withValue: 0, onChannel: UInt8(i))
-        }
-        for (i, engine) in engines.enumerated() {
-            teardownEngine(engine, sampler: samplers[i])
-        }
-    }
-
-    audioEngines   = [:]
-    soundfontSamplers = [:]
-    soundfontURLs  = [:]
-
-    // ② Release the AVAudioSession so the ad SDK gets a clean session
-    do {
-        try AVAudioSession.sharedInstance().setActive(
-            false,
-            options: .notifyOthersOnDeactivation
-        )
-    } catch {
-        print("flutter_midi_pro: failed to deactivate session: \(error)")
-    }
-
-    result(nil)
+  
+      NotificationCenter.default.removeObserver(self)
+  
+      for sfId in Array(audioEngines.keys) {
+          guard let engines = audioEngines[sfId],
+                let samplers = soundfontSamplers[sfId] else { continue }
+          for i in 0...15 {
+              samplers[i].sendController(64,  withValue: 0, onChannel: UInt8(i))
+              samplers[i].sendController(120, withValue: 0, onChannel: UInt8(i))
+          }
+          for (i, engine) in engines.enumerated() {
+              teardownEngine(engine, sampler: samplers[i])
+          }
+      }
+  
+      audioEngines   = [:]
+      soundfontSamplers = [:]
+      soundfontURLs  = [:]
+  
+      // ② Release the AVAudioSession so the ad SDK gets a clean session
+      do {
+          try AVAudioSession.sharedInstance().setActive(
+              false,
+              options: .notifyOthersOnDeactivation
+          )
+      } catch {
+          print("flutter_midi_pro: failed to deactivate session: \(error)")
+      }
+  
+      result(nil)
 
     default:
       result(FlutterMethodNotImplemented)
