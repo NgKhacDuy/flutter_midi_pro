@@ -83,15 +83,12 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
 
   // ✅ NEW: correct teardown order for a single engine+sampler pair
   private func teardownEngine(_ engine: AVAudioEngine, sampler: AVAudioUnitSampler) {
-    // 1. Stop engine first so no callbacks fire during detach
     if engine.isRunning {
       engine.stop()
     }
-    // 2. Disconnect the sampler's output from the mixer
-    //    Guard: only disconnect if the node is actually attached
+    engine.reset()
     if engine.attachedNodes.contains(sampler) {
       engine.disconnectNodeOutput(sampler)
-      // 3. Detach — removes from engine's node list entirely
       engine.detach(sampler)
     }
   }
@@ -248,24 +245,38 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
       result(nil)
 
     case "dispose":
-      // ✅ Iterate over a COPY of keys so we can safely remove during teardown
-      for sfId in Array(audioEngines.keys) {
+      case "dispose":
+    // ① Remove observer BEFORE teardown — prevents interruption
+    //   callbacks firing on half-dead engines
+    NotificationCenter.default.removeObserver(self)
+
+    for sfId in Array(audioEngines.keys) {
         guard let engines = audioEngines[sfId],
               let samplers = soundfontSamplers[sfId] else { continue }
-        // Stop all notes first
-        for channel in 0...15 {
-          samplers[channel].sendController(64, withValue: 0, onChannel: UInt8(channel))
-          samplers[channel].sendController(120, withValue: 0, onChannel: UInt8(channel))
+        for i in 0...15 {
+            samplers[i].sendController(64,  withValue: 0, onChannel: UInt8(i))
+            samplers[i].sendController(120, withValue: 0, onChannel: UInt8(i))
         }
-        // Then tear down each engine+sampler pair
-        for (index, engine) in engines.enumerated() {
-          teardownEngine(engine, sampler: samplers[index])
+        for (i, engine) in engines.enumerated() {
+            teardownEngine(engine, sampler: samplers[i])
         }
-      }
-      audioEngines = [:]
-      soundfontSamplers = [:]
-      soundfontURLs = [:]   // ✅ was missing in original dispose
-      result(nil)
+    }
+
+    audioEngines   = [:]
+    soundfontSamplers = [:]
+    soundfontURLs  = [:]
+
+    // ② Release the AVAudioSession so the ad SDK gets a clean session
+    do {
+        try AVAudioSession.sharedInstance().setActive(
+            false,
+            options: .notifyOthersOnDeactivation
+        )
+    } catch {
+        print("flutter_midi_pro: failed to deactivate session: \(error)")
+    }
+
+    result(nil)
 
     default:
       result(FlutterMethodNotImplemented)
