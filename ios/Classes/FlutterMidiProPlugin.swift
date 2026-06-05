@@ -97,6 +97,8 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
     switch call.method {
 
     case "loadSoundfont":
+      NotificationCenter.default.removeObserver(self) // avoid duplicates
+      setupAudioSessionNotifications()
       let args = call.arguments as! [String: Any]
       let path = args["path"] as! String
       let bank = args["bank"] as! Int
@@ -242,6 +244,16 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
       audioEngines.removeValue(forKey: sfId)
       soundfontSamplers.removeValue(forKey: sfId)
       soundfontURLs.removeValue(forKey: sfId)
+      if audioEngines.isEmpty {
+        do {
+            try AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
+        } catch {
+            print("flutter_midi_pro: failed to deactivate session: \(error)")
+        }
+      }
       result(nil)
 
     case "dispose":
