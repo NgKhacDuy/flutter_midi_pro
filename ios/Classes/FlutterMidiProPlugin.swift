@@ -9,22 +9,22 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
   var soundfontIndex = 1
   var soundfontSamplers: [Int: [AVAudioUnitSampler]] = [:]
   var soundfontURLs: [Int: URL] = [:]
-  
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "flutter_midi_pro", binaryMessenger: registrar.messenger())
     let instance = FlutterMidiProPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
   }
-  
+
   public override init() {
     super.init()
     setupAudioSessionNotifications()
   }
-  
+
   deinit {
     NotificationCenter.default.removeObserver(self)
   }
-  
+
   private func setupAudioSessionNotifications() {
     NotificationCenter.default.addObserver(
       self,
@@ -33,27 +33,23 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
       object: AVAudioSession.sharedInstance()
     )
   }
-  
+
   @objc private func handleAudioSessionInterruption(notification: Notification) {
     guard let userInfo = notification.userInfo,
           let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-          let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
-      return
-    }
-    
+          let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
     switch type {
     case .began:
-      // Interruption began - audio engines will be stopped automatically by the system
-      break
+      // ✅ Safely pause all engines on interruption instead of letting the
+      //    system forcibly stop them while nodes are still attached
+      pauseAllEngines()
     case .ended:
-      // Interruption ended - restart all audio engines
-      // Check if we should resume (if option is present and true, or if option is missing)
       var shouldResume = true
       if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
         let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
         shouldResume = options.contains(.shouldResume)
       }
-      
       if shouldResume {
         restartAudioEngines()
       }
@@ -61,7 +57,16 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
       break
     }
   }
-  
+
+  // ✅ NEW: pause engines without touching node graph
+  private func pauseAllEngines() {
+    for (_, engines) in audioEngines {
+      for engine in engines where engine.isRunning {
+        engine.pause()
+      }
+    }
+  }
+
   private func restartAudioEngines() {
     for (sfId, engines) in audioEngines {
       for (index, engine) in engines.enumerated() {
@@ -69,144 +74,201 @@ public class FlutterMidiProPlugin: NSObject, FlutterPlugin {
           do {
             try engine.start()
           } catch {
-            print("Failed to restart audio engine for sfId \(sfId), channel \(index): \(error)")
+            print("Failed to restart engine sfId \(sfId) ch \(index): \(error)")
           }
         }
       }
     }
   }
 
+  // ✅ NEW: correct teardown order for a single engine+sampler pair
+  private func teardownEngine(_ engine: AVAudioEngine, sampler: AVAudioUnitSampler) {
+    // 1. Stop engine first so no callbacks fire during detach
+    if engine.isRunning {
+      engine.stop()
+    }
+    // 2. Disconnect the sampler's output from the mixer
+    //    Guard: only disconnect if the node is actually attached
+    if engine.attachedNodes.contains(sampler) {
+      engine.disconnectNodeOutput(sampler)
+      // 3. Detach — removes from engine's node list entirely
+      engine.detach(sampler)
+    }
+  }
+
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+
     case "loadSoundfont":
-        let args = call.arguments as! [String: Any]
-        let path = args["path"] as! String
-        let bank = args["bank"] as! Int
-        let program = args["program"] as! Int
-        let url = URL(fileURLWithPath: path)
-        var chSamplers: [AVAudioUnitSampler] = []
-        var chAudioEngines: [AVAudioEngine] = []
-        for _ in 0...15 {
-            let sampler = AVAudioUnitSampler()
-            let audioEngine = AVAudioEngine()
-            audioEngine.attach(sampler)
-            audioEngine.connect(sampler, to: audioEngine.mainMixerNode, format:nil)
-            do {
-                try audioEngine.start()
-            } catch {
-                result(FlutterError(code: "AUDIO_ENGINE_START_FAILED", message: "Failed to start audio engine", details: nil))
-                return
-            }
-            do {
-                let isPercussion = (bank == 128)
-                let bankMSB: UInt8 = isPercussion ? UInt8(kAUSampler_DefaultPercussionBankMSB) : UInt8(kAUSampler_DefaultMelodicBankMSB)
-                let bankLSB: UInt8 = isPercussion ? 0 : UInt8(bank)
-                
-                try sampler.loadSoundBankInstrument(at: url, program: UInt8(program), bankMSB: bankMSB, bankLSB: bankLSB)
-            } catch {
-                result(FlutterError(code: "SOUND_FONT_LOAD_FAILED1", message: "Failed to load soundfont", details: nil))
-                return
-            }
-            chSamplers.append(sampler)
-            chAudioEngines.append(audioEngine)
-        }
-        soundfontSamplers[soundfontIndex] = chSamplers
-        soundfontURLs[soundfontIndex] = url
-        audioEngines[soundfontIndex] = chAudioEngines
-        soundfontIndex += 1
-        result(soundfontIndex-1)
-    case "stopAllNotes":
-        let args = call.arguments as! [String: Any]
-        let sfId = args["sfId"] as! Int
-        let soundfontSampler = soundfontSamplers[sfId]
-        if soundfontSampler == nil {
-            result(FlutterError(code: "SOUND_FONT_NOT_FOUND", message: "Soundfont not found", details: nil))
-            return
-        }
-        soundfontSampler!.forEach { (sampler) in
-            // Sustain'i kapat (CC 64 -> 0) ve anında sesi kes (All Sound Off, CC 120 -> 0)
-            for channel in 0...15 {
-                sampler.sendController(64, withValue: 0, onChannel: UInt8(channel))
-                sampler.sendController(120, withValue: 0, onChannel: UInt8(channel))
-            }
-        }
-        result(nil)
-    case "controlChange":
-        let args = call.arguments as! [String: Any]
-        let sfId = args["sfId"] as! Int
-        let channel = args["channel"] as! Int
-        let controller = args["controller"] as! Int
-        let value = args["value"] as! Int
-        guard let sampler = soundfontSamplers[sfId]?[channel] else {
-            result(FlutterError(code: "SOUND_FONT_NOT_FOUND", message: "Soundfont/channel not found", details: nil))
-            return
-        }
-        sampler.sendController(UInt8(controller), withValue: UInt8(value), onChannel: UInt8(channel))
-        result(nil)
-    case "selectInstrument":
-        let args = call.arguments as! [String: Any]
-        let sfId = args["sfId"] as! Int
-        let channel = args["channel"] as! Int
-        let bank = args["bank"] as! Int
-        let program = args["program"] as! Int
-        let soundfontSampler = soundfontSamplers[sfId]![channel]
-        let soundfontUrl = soundfontURLs[sfId]!
+      let args = call.arguments as! [String: Any]
+      let path = args["path"] as! String
+      let bank = args["bank"] as! Int
+      let program = args["program"] as! Int
+      let url = URL(fileURLWithPath: path)
+      var chSamplers: [AVAudioUnitSampler] = []
+      var chAudioEngines: [AVAudioEngine] = []
+
+      for ch in 0...15 {
+        let sampler = AVAudioUnitSampler()
+        let audioEngine = AVAudioEngine()
+        audioEngine.attach(sampler)
+        audioEngine.connect(sampler, to: audioEngine.mainMixerNode, format: nil)
         do {
-            let isPercussion = (bank == 128)
-            let bankMSB: UInt8 = isPercussion ? UInt8(kAUSampler_DefaultPercussionBankMSB) : UInt8(kAUSampler_DefaultMelodicBankMSB)
-            let bankLSB: UInt8 = isPercussion ? 0 : UInt8(bank)
-            
-            try soundfontSampler.loadSoundBankInstrument(at: soundfontUrl, program: UInt8(program), bankMSB: bankMSB, bankLSB: bankLSB)
+          try audioEngine.start()
         } catch {
-            result(FlutterError(code: "SOUND_FONT_LOAD_FAILED2", message: "Failed to load soundfont", details: nil))
-            return
+          // ✅ Clean up already-created engines before returning error
+          for i in 0..<chAudioEngines.count {
+            teardownEngine(chAudioEngines[i], sampler: chSamplers[i])
+          }
+          result(FlutterError(code: "AUDIO_ENGINE_START_FAILED",
+                              message: "Failed to start audio engine on ch \(ch)",
+                              details: nil))
+          return
         }
-        soundfontSampler.sendProgramChange(UInt8(program), bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB), bankLSB: UInt8(bank), onChannel: UInt8(channel))
-        result(nil)
+        do {
+          let isPercussion = (bank == 128)
+          let bankMSB: UInt8 = isPercussion ? UInt8(kAUSampler_DefaultPercussionBankMSB)
+                                            : UInt8(kAUSampler_DefaultMelodicBankMSB)
+          let bankLSB: UInt8 = isPercussion ? 0 : UInt8(bank)
+          try sampler.loadSoundBankInstrument(at: url, program: UInt8(program),
+                                              bankMSB: bankMSB, bankLSB: bankLSB)
+        } catch {
+          // ✅ Clean up including the engine we just started
+          teardownEngine(audioEngine, sampler: sampler)
+          for i in 0..<chAudioEngines.count {
+            teardownEngine(chAudioEngines[i], sampler: chSamplers[i])
+          }
+          result(FlutterError(code: "SOUND_FONT_LOAD_FAILED1",
+                              message: "Failed to load soundfont on ch \(ch)",
+                              details: nil))
+          return
+        }
+        chSamplers.append(sampler)
+        chAudioEngines.append(audioEngine)
+      }
+
+      soundfontSamplers[soundfontIndex] = chSamplers
+      soundfontURLs[soundfontIndex] = url
+      audioEngines[soundfontIndex] = chAudioEngines
+      soundfontIndex += 1
+      result(soundfontIndex - 1)
+
+    case "stopAllNotes":
+      let args = call.arguments as! [String: Any]
+      let sfId = args["sfId"] as! Int
+      guard let samplers = soundfontSamplers[sfId] else {
+        result(FlutterError(code: "SOUND_FONT_NOT_FOUND", message: "Soundfont not found", details: nil))
+        return
+      }
+      samplers.forEach { sampler in
+        for channel in 0...15 {
+          sampler.sendController(64, withValue: 0, onChannel: UInt8(channel))
+          sampler.sendController(120, withValue: 0, onChannel: UInt8(channel))
+        }
+      }
+      result(nil)
+
+    case "controlChange":
+      let args = call.arguments as! [String: Any]
+      let sfId = args["sfId"] as! Int
+      let channel = args["channel"] as! Int
+      let controller = args["controller"] as! Int
+      let value = args["value"] as! Int
+      guard let sampler = soundfontSamplers[sfId]?[channel] else {
+        result(FlutterError(code: "SOUND_FONT_NOT_FOUND", message: "Soundfont/channel not found", details: nil))
+        return
+      }
+      sampler.sendController(UInt8(controller), withValue: UInt8(value), onChannel: UInt8(channel))
+      result(nil)
+
+    case "selectInstrument":
+      let args = call.arguments as! [String: Any]
+      let sfId = args["sfId"] as! Int
+      let channel = args["channel"] as! Int
+      let bank = args["bank"] as! Int
+      let program = args["program"] as! Int
+      let soundfontSampler = soundfontSamplers[sfId]![channel]
+      let soundfontUrl = soundfontURLs[sfId]!
+      do {
+        let isPercussion = (bank == 128)
+        let bankMSB: UInt8 = isPercussion ? UInt8(kAUSampler_DefaultPercussionBankMSB)
+                                          : UInt8(kAUSampler_DefaultMelodicBankMSB)
+        let bankLSB: UInt8 = isPercussion ? 0 : UInt8(bank)
+        try soundfontSampler.loadSoundBankInstrument(at: soundfontUrl, program: UInt8(program),
+                                                     bankMSB: bankMSB, bankLSB: bankLSB)
+      } catch {
+        result(FlutterError(code: "SOUND_FONT_LOAD_FAILED2", message: "Failed to load soundfont", details: nil))
+        return
+      }
+      soundfontSampler.sendProgramChange(UInt8(program),
+                                         bankMSB: UInt8(kAUSampler_DefaultMelodicBankMSB),
+                                         bankLSB: UInt8(bank),
+                                         onChannel: UInt8(channel))
+      result(nil)
+
     case "playNote":
-        let args = call.arguments as! [String: Any]
-        let channel = args["channel"] as! Int
-        let note = args["key"] as! Int
-        let velocity = args["velocity"] as! Int
-        let sfId = args["sfId"] as! Int
-        let soundfontSampler = soundfontSamplers[sfId]![channel]
-        soundfontSampler.startNote(UInt8(note), withVelocity: UInt8(velocity), onChannel: UInt8(channel))
-        result(nil)
+      let args = call.arguments as! [String: Any]
+      let channel = args["channel"] as! Int
+      let note = args["key"] as! Int
+      let velocity = args["velocity"] as! Int
+      let sfId = args["sfId"] as! Int
+      let soundfontSampler = soundfontSamplers[sfId]![channel]
+      soundfontSampler.startNote(UInt8(note), withVelocity: UInt8(velocity), onChannel: UInt8(channel))
+      result(nil)
+
     case "stopNote":
-        let args = call.arguments as! [String: Any]
-        let channel = args["channel"] as! Int
-        let note = args["key"] as! Int
-        let sfId = args["sfId"] as! Int
-        let soundfontSampler = soundfontSamplers[sfId]![channel]
-        soundfontSampler.stopNote(UInt8(note), onChannel: UInt8(channel))
-        result(nil)
+      let args = call.arguments as! [String: Any]
+      let channel = args["channel"] as! Int
+      let note = args["key"] as! Int
+      let sfId = args["sfId"] as! Int
+      let soundfontSampler = soundfontSamplers[sfId]![channel]
+      soundfontSampler.stopNote(UInt8(note), onChannel: UInt8(channel))
+      result(nil)
+
     case "unloadSoundfont":
-        let args = call.arguments as! [String:Any]
-        let sfId = args["sfId"] as! Int
-        let soundfontSampler = soundfontSamplers[sfId]
-        if soundfontSampler == nil {
-            result(FlutterError(code: "SOUND_FONT_NOT_FOUND", message: "Soundfont not found", details: nil))
-            return
-        }
-        audioEngines[sfId]?.forEach { (audioEngine) in
-            audioEngine.stop()
-        }
-        audioEngines.removeValue(forKey: sfId)
-        soundfontSamplers.removeValue(forKey: sfId)
-        soundfontURLs.removeValue(forKey: sfId)
-        result(nil)
+      let args = call.arguments as! [String: Any]
+      let sfId = args["sfId"] as! Int
+      guard let engines = audioEngines[sfId],
+            let samplers = soundfontSamplers[sfId] else {
+        result(FlutterError(code: "SOUND_FONT_NOT_FOUND", message: "Soundfont not found", details: nil))
+        return
+      }
+      // ✅ Proper teardown: stop notes → disconnect → detach → stop engine
+      for channel in 0...15 {
+        let sampler = samplers[channel]
+        sampler.sendController(64, withValue: 0, onChannel: UInt8(channel))
+        sampler.sendController(120, withValue: 0, onChannel: UInt8(channel))
+      }
+      for (index, engine) in engines.enumerated() {
+        teardownEngine(engine, sampler: samplers[index])
+      }
+      audioEngines.removeValue(forKey: sfId)
+      soundfontSamplers.removeValue(forKey: sfId)
+      soundfontURLs.removeValue(forKey: sfId)
+      result(nil)
+
     case "dispose":
-        audioEngines.forEach { (key, value) in
-            value.forEach { (audioEngine) in
-                audioEngine.stop()
-            }
+      // ✅ Iterate over a COPY of keys so we can safely remove during teardown
+      for sfId in Array(audioEngines.keys) {
+        guard let engines = audioEngines[sfId],
+              let samplers = soundfontSamplers[sfId] else { continue }
+        // Stop all notes first
+        for channel in 0...15 {
+          samplers[channel].sendController(64, withValue: 0, onChannel: UInt8(channel))
+          samplers[channel].sendController(120, withValue: 0, onChannel: UInt8(channel))
         }
-        audioEngines = [:]
-        soundfontSamplers = [:]
-        result(nil)
+        // Then tear down each engine+sampler pair
+        for (index, engine) in engines.enumerated() {
+          teardownEngine(engine, sampler: samplers[index])
+        }
+      }
+      audioEngines = [:]
+      soundfontSamplers = [:]
+      soundfontURLs = [:]   // ✅ was missing in original dispose
+      result(nil)
+
     default:
       result(FlutterMethodNotImplemented)
-        break
     }
   }
 }
